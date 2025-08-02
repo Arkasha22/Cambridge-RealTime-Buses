@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cambridge Bus Tracker</title>
+  <script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.2.0/maptiler-sdk.umd.min.js"></script>
+  <link href="https://cdn.maptiler.com/maptiler-sdk-js/v3.2.0/maptiler-sdk.css" rel="stylesheet" />
+  <style>
+    body { margin: 0; padding: 0; }
+    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    maptilersdk.config.apiKey = 'BmnWxckqLnFp9MhF4ewg';
+
+    const map = new maptilersdk.Map({
+      container: 'map',
+      style: maptilersdk.MapStyle.STREETS,
+      center: [0.1225, 52.205],
+      zoom: 12
+    });
+    
+    map.on('load', async function() {
+      // Load custom bus icon
+      //const busIcon = await map.loadImage('https://www.donmaruta.co.uk/Bus.png');
+      const busIcon = await map.loadImage('Bus.png');
+      map.addImage('bus-icon', busIcon.data);
+
+      // (Optional) Still load the stop icon if needed
+      const stopIcon = await map.loadImage('BusStop.png');
+      map.addImage('BusStop', stopIcon.data);
+
+      const geojson = await maptilersdk.data.get('019817b5-06de-79f4-b7a3-8462f5bb76f4');
+      map.addSource('buses', {
+        type: 'geojson',
+        data: geojson
+      });
+
+      map.addLayer({
+        'id': 'buses',
+        'type': 'symbol',
+        'source': 'buses',
+        'layout': {
+          'icon-image': 'BusStop',
+          'icon-size': ['*', 0.025]
+        }
+      });
+    });
+
+    map.on('load', () => {
+      const fetchAndUpdate = () => {
+        fetch('https://www.donmaruta.co.uk/bus-proxy3.php?boundingBox=0.079789,52.165745,0.191087,52.239907')
+          .then(response => response.text())
+          .then(xmlString => {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+
+            const nsResolver = function(prefix) {
+              const ns = { 'siri': 'http://www.siri.org.uk/siri' };
+              return ns[prefix] || null;
+            };
+            
+            const lNodes = xmlDoc.getElementsByTagName('VehicleActivity');
+
+            const features = [];
+            const routeNames = new Set();  // Use a Set to keep them unique
+
+            for (const node of lNodes) {
+                const longitude = parseFloat(
+                    xmlDoc.evaluate('.//siri:VehicleLocation/siri:Longitude', node, nsResolver, XPathResult.STRING_TYPE, null).stringValue
+                );
+                const latitude = parseFloat(
+                    xmlDoc.evaluate('.//siri:VehicleLocation/siri:Latitude', node, nsResolver, XPathResult.STRING_TYPE, null).stringValue
+                );
+                const routeName = xmlDoc.evaluate('.//siri:MonitoredVehicleJourney/siri:PublishedLineName', node, nsResolver, XPathResult.STRING_TYPE, null).stringValue.trim();
+
+                // Skip invalid coordinates
+                if (!isNaN(longitude) && !isNaN(latitude)) {
+                    features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [longitude, latitude]
+                        },
+                        properties: {
+                            label: routeName
+                        }
+                    });
+                routeNames.add(routeName);
+                }
+            }
+            
+            const uniqueRouteNames = Array.from(routeNames);
+            console.log("Unique Route Names:", uniqueRouteNames);
+            
+            // 1. List of distinct colours (expand if needed)
+            const colorPalette = [
+              '#e6194B', '#4363d8', '#f58231',
+              '#911eb4', '#f032e6', '#008080',
+              '#9a6324', '#800000', '#808000'
+            ];
+
+            // 2. Assign a colour to each route
+            const routeColorMap = {};
+            uniqueRouteNames.forEach((route, index) => {
+              routeColorMap[route] = colorPalette[index % colorPalette.length];
+            });
+
+            // 3. Build a 'match' expression array for MapLibre
+            const matchExpression = ['match', ['get', 'label']];
+            for (const [route, color] of Object.entries(routeColorMap)) {
+              matchExpression.push(route, color);
+            }
+            matchExpression.push('#000000'); // default color
+
+
+            // Now create one FeatureCollection with all vehicle points
+            const data = {
+                type: 'FeatureCollection',
+                features: features
+            };
+
+            // Update or create the GeoJSON source
+            if (map.getSource('buses-live')) {
+                map.getSource('buses-live').setData(data);
+            } else {
+                map.addSource('buses-live', {
+                    type: 'geojson',
+                    data: data
+                });
+
+                map.addLayer({
+                    id: 'bus-layer',
+                    type: 'symbol',
+                    source: 'buses-live',
+                    layout: {
+                        'icon-image': 'bus-icon',
+                        'icon-size': 0.05,
+                        'icon-allow-overlap': true,
+                        'icon-ignore-placement': true,
+                        'text-field': ['get', 'label'],         // ← this shows the label
+                        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                        'text-size': 12,
+                        'text-offset': [0, 0.5],                // position label above the icon
+                        'text-anchor': 'top'
+                    },
+                    paint: {
+                      'text-color': matchExpression,
+                      'text-halo-color': '#ffffff',
+                      'text-halo-width': 1,
+                      'icon-color': matchExpression
+                    }
+                });
+            }
+
+
+
+            // Center the map on the location
+            //map.flyTo({
+            //  center: [longitude, latitude],
+            //  zoom: 14,
+            //  speed: 0.5
+            //});
+          })
+          .catch(error => {
+            console.error("Error fetching XML:", error);
+          });
+      };
+
+      // Initial call
+      fetchAndUpdate();
+
+      // Repeat every 10 seconds
+      setInterval(fetchAndUpdate, 10000);
+    });
+  </script>
+</body>
+</html>
