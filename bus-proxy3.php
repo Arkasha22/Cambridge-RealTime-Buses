@@ -11,7 +11,7 @@ if (!isset($_GET['boundingBox'])) {
 }
 
 $boundingBox = urlencode($_GET['boundingBox']);
-$apiKey = '556eb16cbba932c08bfd31a4a49680a18a9a7565';
+$apiKey = 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
 
 $url = "https://data.bus-data.dft.gov.uk/api/v1/datafeed/?api_key=$apiKey&boundingBox=$boundingBox";
 
@@ -25,3 +25,4 @@ if ($response === FALSE) {
 
 echo $response;
 ?>
+
